@@ -1,0 +1,63 @@
+# sqlseed sample schema definition
+# Run: sqlseed generate examples/sample_schema.yaml
+
+tables:
+  - name: users
+    row_count: 50
+    columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: email
+        type: email
+        unique: true
+      - name: full_name
+        type: name
+      - name: phone
+        type: phone
+        nullable: true
+      - name: created_at
+        type: datetime
+
+  - name: products
+    row_count: 30
+    columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: sku
+        type: string
+        unique: true
+        constraints:
+          max_length: 20
+      - name: name
+        type: string
+        constraints:
+          max_length: 100
+      - name: price
+        type: float
+        constraints:
+          min: 0.01
+          max: 9999.99
+      - name: in_stock
+        type: boolean
+
+  - name: orders
+    row_count: 100
+    columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: user_id
+        type: integer
+        foreign_key: users.id
+      - name: product_id
+        type: integer
+        foreign_key: products.id
+      - name: quantity
+        type: integer
+        constraints:
+          min: 1
+          max: 50
+      - name: ordered_at
+        type: datetime
