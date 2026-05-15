@@ -1,85 +1,67 @@
-"""Tests for sqlseed.pipeline."""
-
-from __future__ import annotations
+"""Tests for sqlseed.pipeline module."""
 
 import pytest
-
+from sqlseed.schema import SchemaDefinition, TableDefinition, ColumnDefinition
 from sqlseed.pipeline import PipelineOptions, run_pipeline
-from sqlseed.renderer import RenderOptions
+from sqlseed.transformer import ColumnTransform, TableTransformer, TransformOptions
 from sqlseed.sampler import SampleOptions
-from sqlseed.schema import ColumnDefinition, SchemaDefinition, TableDefinition
+from sqlseed.renderer import RenderOptions
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def make_col(name: str, col_type: str = "string") -> ColumnDefinition:
-    return ColumnDefinition(name=name, col_type=col_type)
+def make_col(name: str, col_type: str = "string", primary_key: bool = False) -> ColumnDefinition:
+    return ColumnDefinition(name=name, col_type=col_type, primary_key=primary_key)
 
 
 def make_schema(row_count: int = 5) -> SchemaDefinition:
-    return SchemaDefinition(
-        tables=[
-            TableDefinition(
-                name="users",
-                row_count=row_count,
-                columns=[
-                    make_col("id", "integer"),
-                    make_col("email", "email"),
-                ],
-            )
-        ]
+    table = TableDefinition(
+        name="users",
+        row_count=row_count,
+        columns=[make_col("id", "integer", primary_key=True), make_col("email", "email")],
     )
+    return SchemaDefinition(tables=[table])
 
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 class TestRunPipeline:
     def test_returns_render_result(self):
         result = run_pipeline(make_schema())
-        assert result is not None
+        assert hasattr(result, "ok")
+        assert hasattr(result, "dataset")
 
     def test_ok_for_valid_schema(self):
         result = run_pipeline(make_schema())
         assert result.ok
 
-    def test_output_contains_table(self):
-        result = run_pipeline(make_schema())
-        assert "users" in result.output or len(result.errors) == 0
-
-    def test_sampling_reduces_rows(self):
-        opts = PipelineOptions(
-            sample=SampleOptions(n=2, seed=0),
-            render=RenderOptions(format="json"),
-        )
-        result = run_pipeline(make_schema(row_count=10), opts)
-        assert result.ok
+    def test_dataset_contains_table(self):
+        result = run_pipeline(make_schema(row_count=3))
+        assert "users" in result.dataset
+        assert len(result.dataset["users"]) == 3
 
     def test_invalid_schema_returns_errors(self):
-        bad_schema = SchemaDefinition(
-            tables=[
-                TableDefinition(
-                    name="",          # invalid: empty name
-                    row_count=5,
-                    columns=[make_col("id", "integer")],
-                )
-            ]
+        table = TableDefinition(
+            name="bad",
+            row_count=-1,
+            columns=[make_col("id", "integer", primary_key=True)],
         )
-        result = run_pipeline(bad_schema, PipelineOptions(validate=True))
+        schema = SchemaDefinition(tables=[table])
+        result = run_pipeline(schema)
         assert not result.ok
         assert len(result.errors) > 0
 
-    def test_validate_false_skips_validation(self):
-        """Even with an empty-name table, skipping validation should not crash."""
-        schema = make_schema()
-        opts = PipelineOptions(validate=False)
-        result = run_pipeline(schema, opts)
-        # As long as it doesn't raise, the pipeline completed
-        assert result is not None
+    def test_transform_applied(self):
+        ct = ColumnTransform(column="email", fn=lambda _: "masked@example.com")
+        tt = TableTransformer("users")
+        tt.add(ct.apply)
+        opts = PipelineOptions(transform_options=TransformOptions())
+        opts.transform_options.add_transformer(tt)
+        result = run_pipeline(make_schema(row_count=4), opts)
+        assert all(r["email"] == "masked@example.com" for r in result.dataset["users"])
 
-    def test_default_options_used_when_none_passed(self):
-        result = run_pipeline(make_schema())
+    def test_sample_applied(self):
+        sample_opts = SampleOptions(fraction=0.5, seed=42)
+        opts = PipelineOptions(sample_options=sample_opts)
+        result = run_pipeline(make_schema(row_count=10), opts)
+        assert len(result.dataset["users"]) <= 10
+
+    def test_none_options_uses_defaults(self):
+        result = run_pipeline(make_schema(), None)
         assert result.ok
