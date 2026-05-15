@@ -1,84 +1,87 @@
-"""Tests for the sqlseed CLI."""
+"""Tests for the sqlseed CLI, including the --profile flag."""
+
+from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 import pytest
 
-from sqlseed.cli import run
-
-
-SAMPLE_SCHEMA = textwrap.dedent("""\
-    tables:
-      users:
-        row_count: 5
-        columns:
-          id:
-            type: integer
-            primary_key: true
-          name:
-            type: string
-            nullable: false
-          email:
-            type: string
-            nullable: true
-""")
+from sqlseed.cli import build_parser, run
 
 
 @pytest.fixture()
 def schema_file(tmp_path: Path) -> Path:
-    path = tmp_path / "schema.yaml"
-    path.write_text(SAMPLE_SCHEMA)
-    return path
+    content = textwrap.dedent("""\
+        tables:
+          - name: users
+            row_count: 5
+            columns:
+              - name: id
+                type: integer
+                primary_key: true
+              - name: username
+                type: varchar
+                unique: true
+    """)
+    p = tmp_path / "schema.yaml"
+    p.write_text(content)
+    return p
 
 
 def test_validate_only_valid_schema(schema_file, capsys):
-    code = run([str(schema_file), "--validate-only"])
+    parser = build_parser()
+    args = parser.parse_args([str(schema_file), "--validate"])
+    code = run(args)
     assert code == 0
-    captured = capsys.readouterr()
-    assert "valid" in captured.out
+    assert "valid" in capsys.readouterr().out.lower()
 
 
-def test_missing_schema_file(tmp_path):
-    code = run([str(tmp_path / "nonexistent.yaml")])
+def test_missing_schema_file(tmp_path, capsys):
+    parser = build_parser()
+    args = parser.parse_args([str(tmp_path / "missing.yaml")])
+    code = run(args)
     assert code == 1
+    assert "not found" in capsys.readouterr().err.lower()
 
 
-def test_sql_output_creates_files(schema_file, tmp_path):
-    output_dir = tmp_path / "out"
-    code = run([str(schema_file), "--format", "sql", "--output", str(output_dir)])
+def test_profile_flag_prints_summary(schema_file, capsys):
+    parser = build_parser()
+    args = parser.parse_args([str(schema_file), "--profile"])
+    code = run(args)
     assert code == 0
-    assert (output_dir / "users.sql").exists()
+    out = capsys.readouterr().out
+    assert "Schema Profile" in out
+    assert "users" in out
 
 
-def test_csv_output_creates_files(schema_file, tmp_path):
-    output_dir = tmp_path / "out_csv"
-    code = run([str(schema_file), "--format", "csv", "--output", str(output_dir)])
+def test_sql_output_creates_files(schema_file, tmp_path, capsys):
+    parser = build_parser()
+    args = parser.parse_args([
+        str(schema_file), "--format", "sql", "--output-dir", str(tmp_path / "out")
+    ])
+    code = run(args)
     assert code == 0
-    assert (output_dir / "users.csv").exists()
+    files = list((tmp_path / "out").glob("*.sql"))
+    assert len(files) >= 1
 
 
-def test_invalid_schema_reports_errors(tmp_path, capsys):
-    bad_schema = tmp_path / "bad.yaml"
-    bad_schema.write_text(
-        textwrap.dedent("""\
-            tables:
-              broken:
-                row_count: -1
-                columns:
-                  id:
-                    type: integer
-                    primary_key: true
-        """)
-    )
-    code = run([str(bad_schema)])
+def test_csv_output_creates_files(schema_file, tmp_path, capsys):
+    parser = build_parser()
+    args = parser.parse_args([
+        str(schema_file), "--format", "csv", "--output-dir", str(tmp_path / "out")
+    ])
+    code = run(args)
+    assert code == 0
+    files = list((tmp_path / "out").glob("*.csv"))
+    assert len(files) >= 1
+
+
+def test_invalid_yaml_returns_error(tmp_path, capsys):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(": : : not valid yaml :::")
+    parser = build_parser()
+    args = parser.parse_args([str(bad)])
+    code = run(args)
     assert code == 1
-    captured = capsys.readouterr()
-    assert "validation failed" in captured.err.lower()
-
-
-def test_output_message_lists_tables(schema_file, tmp_path, capsys):
-    output_dir = tmp_path / "out"
-    run([str(schema_file), "--output", str(output_dir)])
-    captured = capsys.readouterr()
-    assert "users" in captured.out

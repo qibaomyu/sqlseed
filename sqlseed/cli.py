@@ -1,4 +1,6 @@
-"""Command-line interface for sqlseed."""
+"""CLI entry point for sqlseed."""
+
+from __future__ import annotations
 
 import argparse
 import sys
@@ -8,6 +10,7 @@ from sqlseed.schema_loader import load_schema_from_yaml
 from sqlseed.validator import validate_schema
 from sqlseed.generator import generate_dataset
 from sqlseed.exporter import export_dataset
+from sqlseed.profiler import profile_schema
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -15,34 +18,35 @@ def build_parser() -> argparse.ArgumentParser:
         prog="sqlseed",
         description="Generate realistic test data from a YAML schema definition.",
     )
-    parser.add_argument("schema", help="Path to the YAML schema file.")
+    parser.add_argument("schema", help="Path to the YAML schema file")
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate the schema and exit without generating data",
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Print a profile summary of the schema and exit",
+    )
     parser.add_argument(
         "--format",
         choices=["sql", "csv"],
         default="sql",
-        help="Output format (default: sql).",
+        help="Output format (default: sql)",
     )
     parser.add_argument(
-        "--output",
-        "-o",
-        default=None,
-        help="Output directory. Defaults to current directory.",
-    )
-    parser.add_argument(
-        "--validate-only",
-        action="store_true",
-        help="Validate the schema without generating data.",
+        "--output-dir",
+        default=".",
+        help="Directory to write output files (default: current directory)",
     )
     return parser
 
 
-def run(argv=None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-
+def run(args: argparse.Namespace) -> int:
     schema_path = Path(args.schema)
     if not schema_path.exists():
-        print(f"Error: schema file '{schema_path}' not found.", file=sys.stderr)
+        print(f"Error: schema file not found: {schema_path}", file=sys.stderr)
         return 1
 
     try:
@@ -52,33 +56,34 @@ def run(argv=None) -> int:
         return 1
 
     result = validate_schema(schema)
-    if not result.valid:
+    if not result.is_valid:
         print("Schema validation failed:", file=sys.stderr)
-        for error in result.errors:
-            print(f"  - {error}", file=sys.stderr)
+        for err in result.errors:
+            print(f"  {err}", file=sys.stderr)
         return 1
 
-    if args.validate_only:
+    if args.validate:
         print("Schema is valid.")
         return 0
 
-    output_dir = Path(args.output) if args.output else Path.cwd()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if args.profile:
+        sp = profile_schema(schema)
+        print(sp.summary())
+        return 0
 
     dataset = generate_dataset(schema)
-    export_dataset(dataset, schema, output_dir=str(output_dir), fmt=args.format)
-
-    table_names = [t.name for t in schema.tables]
-    print(
-        f"Generated data for {len(table_names)} table(s): {', '.join(table_names)}"
-    )
-    print(f"Output written to: {output_dir}")
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    export_dataset(dataset, fmt=args.format, output_dir=str(output_dir))
+    print(f"Data written to {output_dir} ({args.format} format).")
     return 0
 
 
-def main() -> None:
-    sys.exit(run())
+def main() -> None:  # pragma: no cover
+    parser = build_parser()
+    args = parser.parse_args()
+    sys.exit(run(args))
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
