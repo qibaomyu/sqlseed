@@ -1,40 +1,44 @@
-"""End-to-end pipeline orchestrating validate → generate → transform → sample → render."""
+"""High-level pipeline that validates, generates, and optionally merges datasets."""
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Dict, List, Optional
 
 from sqlseed.schema import SchemaDefinition
 from sqlseed.validator import validate_schema
 from sqlseed.generator import generate_dataset
-from sqlseed.transformer import TransformOptions, transform_dataset
-from sqlseed.sampler import SampleOptions, sample_dataset
 from sqlseed.renderer import RenderOptions, RenderResult, render
+from sqlseed.merger import MergeOptions, merge_datasets
+
+Row = Dict[str, object]
+Dataset = Dict[str, List[Row]]
 
 
 @dataclass
 class PipelineOptions:
-    """Aggregated options controlling each stage of the pipeline."""
+    """Options forwarded through the pipeline stages."""
 
-    render_options: RenderOptions = field(default_factory=RenderOptions)
-    transform_options: Optional[TransformOptions] = None
-    sample_options: Optional[SampleOptions] = None
+    render: RenderOptions = field(default_factory=RenderOptions)
+    merge: Optional[MergeOptions] = None
+    extra_datasets: List[Dataset] = field(default_factory=list)
 
 
 def run_pipeline(schema: SchemaDefinition, options: Optional[PipelineOptions] = None) -> RenderResult:
-    """Run the full sqlseed pipeline and return a RenderResult."""
+    """Validate *schema*, generate rows, optionally merge extra datasets, and render.
+
+    Returns a :class:`RenderResult` whose ``dataset`` is the final merged
+    (or plain generated) dataset.
+    """
     if options is None:
         options = PipelineOptions()
 
-    validation = validate_schema(schema)
-    if not validation.ok:
-        return RenderResult(errors=validation.errors, dataset={})
+    result = render(schema, options.render)
 
-    dataset = generate_dataset(schema)
+    if not result.ok:
+        return result
 
-    if options.transform_options is not None:
-        dataset = transform_dataset(dataset, options.transform_options)
+    if options.extra_datasets or options.merge is not None:
+        all_datasets = [result.dataset] + options.extra_datasets
+        merged = merge_datasets(all_datasets, options.merge)
+        return RenderResult(dataset=merged, errors=result.errors)
 
-    if options.sample_options is not None:
-        dataset = sample_dataset(dataset, options.sample_options)
-
-    return render(schema, dataset, options.render_options)
+    return result
