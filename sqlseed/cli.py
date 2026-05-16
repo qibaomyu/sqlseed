@@ -43,23 +43,38 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run(args: argparse.Namespace) -> int:
-    schema_path = Path(args.schema)
-    if not schema_path.exists():
-        print(f"Error: schema file not found: {schema_path}", file=sys.stderr)
-        return 1
+def _load_and_validate_schema(schema_path: Path):
+    """Load a schema from *schema_path* and validate it.
 
+    Returns the validated schema on success.  Prints an error message to
+    stderr and returns ``None`` on failure so the caller can propagate the
+    appropriate exit code.
+    """
     try:
         schema = load_schema_from_yaml(str(schema_path))
     except Exception as exc:  # noqa: BLE001
         print(f"Error loading schema: {exc}", file=sys.stderr)
-        return 1
+        return None
 
     result = validate_schema(schema)
     if not result.is_valid:
         print("Schema validation failed:", file=sys.stderr)
         for err in result.errors:
             print(f"  {err}", file=sys.stderr)
+        return None
+
+    return schema
+
+
+def run(args: argparse.Namespace) -> int:
+    """Execute the command described by *args* and return an exit code."""
+    schema_path = Path(args.schema)
+    if not schema_path.exists():
+        print(f"Error: schema file not found: {schema_path}", file=sys.stderr)
+        return 1
+
+    schema = _load_and_validate_schema(schema_path)
+    if schema is None:
         return 1
 
     if args.validate:
